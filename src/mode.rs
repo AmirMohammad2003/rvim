@@ -1,12 +1,13 @@
-use std::sync::MutexGuard;
+use crate::STORE;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Mode {
     Insert,
     Normal,
     Command,
 }
 
-pub fn change_mode(mode: &mut MutexGuard<'_, Mode>, new_mode: Mode) {
-    **mode = new_mode;
+pub fn change_mode(new_mode: Mode) {
+    let mut store = STORE.write().unwrap();
+    store.mode = new_mode;
 }

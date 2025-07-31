@@ -27,6 +27,7 @@ use crate::buffer::{
 
 pub static STORE: RwLock<Store> = RwLock::new(Store {
     command: String::new(),
+    mode: Mode::Normal,
 });
 
 fn draw(
@@ -36,7 +37,6 @@ fn draw(
     leftcol: usize,
     right_visible: usize,
     filler: usize,
-    mode: &Arc<Mutex<Mode>>,
 ) -> Result<(), std::io::Error> {
     let nl = get_line_seperator(&CRLF);
 
@@ -58,9 +58,9 @@ fn draw(
     for _ in 0..filler {
         write!(lock, "~{nl}")?;
     }
-
-    let command_text = STORE.read().unwrap().command.clone();
-    let message = match *mode.lock().unwrap() {
+    let store = STORE.read().unwrap();
+    let command_text = &store.command;
+    let message = match store.mode {
         Mode::Normal => String::new(),
         Mode::Insert => String::from("-- INSERT --"),
         Mode::Command => format!(":{command_text}"),
@@ -89,7 +89,6 @@ fn redraw(
     redraw_needed: Arc<(Mutex<bool>, Condvar)>,
     window: Arc<Mutex<Window>>,
     mut stdout: Stdout,
-    mode: Arc<Mutex<Mode>>,
 ) -> Result<(), std::io::Error> {
     loop {
         hide_cursor(&mut stdout)?;
@@ -108,7 +107,6 @@ fn redraw(
                 leftcol,
                 right_visible,
                 filler,
-                &mode,
             )?;
             move_cursor(cursor)?;
         }
@@ -133,16 +131,13 @@ fn main() -> Result<(), std::io::Error> {
         height.saturating_sub(1).into(),
     )));
 
-    let mode = Arc::new(Mutex::new(mode::Mode::Normal));
-
     terminal::enable_raw_mode()?;
 
     let redraw_clone = redraw_needed.clone();
     let window_clone = window.clone();
-    let mode_clone = mode.clone();
     let key_handler = std::thread::spawn(move || {
         loop {
-            let res = handle_keys(&window_clone, &mode_clone);
+            let res = handle_keys(&window_clone);
             match res {
                 Err(e) => {
                     println!("Error handling keys: {e}");
@@ -163,7 +158,7 @@ fn main() -> Result<(), std::io::Error> {
     let stdout = stdout();
 
     let redraw_clone = redraw_needed.clone();
-    redraw(redraw_clone, window, stdout, mode)?;
+    redraw(redraw_clone, window, stdout)?;
 
     key_handler
         .join()
