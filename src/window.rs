@@ -30,7 +30,7 @@ impl Window {
 
     fn fix_col(&mut self) {
         let linenr = self.cursor.row + self.topline;
-        let linelen = self.buffer.lock().unwrap().content[linenr].len();
+        let linelen = self.buffer.lock().unwrap().content.line(linenr).len_chars();
         if self.cursor.col >= linelen {
             self.cursor.col = linelen;
         }
@@ -66,7 +66,7 @@ impl Window {
 
     pub fn cursor_right(&mut self) {
         let linenr = self.cursor.row + self.topline;
-        let linelen = self.buffer.lock().unwrap().content[linenr].len();
+        let linelen = self.buffer.lock().unwrap().content.line(linenr).len_chars();
         self.cursor.move_right(linelen);
     }
 
@@ -88,23 +88,15 @@ impl Window {
         let linenr = self.cursor.row + self.topline;
         {
             let mut buffer = self.buffer.lock().unwrap();
-            let linelen = buffer.content[linenr].len();
-            if self.cursor.col >= linelen {
-                if newline {
-                    buffer.content.insert(linenr + 1, String::new());
-                    buffer.lines += 1;
-                } else {
-                    buffer.content[linenr].push(ch);
-                }
-            } else if newline {
-                let new_line = buffer.content[linenr].split_off(self.cursor.col);
-                buffer.content.insert(linenr + 1, new_line);
+            let linelen = buffer.content.line(linenr).len_chars();
+            let char_idx = buffer.content.line_to_char(linenr) + min(self.cursor.col, linelen);
+            buffer.content.insert_char(char_idx, ch);
+            if newline {
                 buffer.lines += 1;
-            } else {
-                buffer.content[linenr].insert(self.cursor.col, ch);
             }
             buffer.edited = true;
         }
+
         if newline {
             self.cursor_down();
             self.cursor.col = 0;
@@ -118,33 +110,37 @@ impl Window {
         let mut left = false;
         {
             let mut buffer = self.buffer.lock().unwrap();
-            let linelen = buffer.content[linenr].len();
+            let linelen = buffer.content.line(linenr).len_chars();
+            let char_idx = (buffer.content.line_to_char(linenr) + min(self.cursor.col, linelen))
+                .saturating_sub(1);
             if self.cursor.col >= linelen {
                 if linelen == 0 {
                     if (buffer.lines == 1) || (linenr == 0) {
                         return;
                     }
-                    buffer.content.remove(linenr);
                     buffer.lines -= 1;
-                    let length = buffer.content[linenr - 1].len();
-                    self.cursor.col = length;
+                    self.cursor.col = buffer
+                        .content
+                        .line(linenr - 1)
+                        .len_chars()
+                        .saturating_sub(1);
                 } else {
-                    buffer.content[linenr].pop();
                     left = true;
                 }
             } else if self.cursor.col == 0 {
                 if linenr == 0 {
                     return;
                 }
-                let line = buffer.content.remove(linenr);
                 buffer.lines -= 1;
-                let length = buffer.content[linenr - 1].len();
-                buffer.content[linenr - 1].push_str(&line);
-                self.cursor.col = length;
+                self.cursor.col = buffer
+                    .content
+                    .line(linenr - 1)
+                    .len_chars()
+                    .saturating_sub(1);
             } else {
-                buffer.content[linenr].remove(self.cursor.col - 1);
                 left = true;
             }
+            buffer.content.remove(char_idx..=char_idx);
             buffer.edited = true;
         }
         if left {

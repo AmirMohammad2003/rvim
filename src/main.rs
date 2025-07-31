@@ -11,49 +11,63 @@ use crossterm::{execute, terminal};
 use exit::graceful_exit;
 use key_handling::handle_keys;
 use mode::Mode;
+use ropey::Rope;
 use settings::Store;
 use std::{
-    cmp::{max, min},
-    io::{Stdout, stdout},
+    cmp::min,
+    io::{Stdout, Write, stdout},
     sync::{Arc, Condvar, Mutex, RwLock},
 };
 use window::Window;
+
+use crate::buffer::{
+    LineTermination::{CRLF, LF},
+    get_line_seperator,
+};
 
 pub static STORE: RwLock<Store> = RwLock::new(Store {
     command: String::new(),
 });
 
 fn draw(
-    content: &[String],
+    content: &Rope,
     topline: usize,
     end: usize,
     leftcol: usize,
     right_visible: usize,
     filler: usize,
     mode: &Arc<Mutex<Mode>>,
-) {
-    for (i, line) in content[topline..end].iter().enumerate() {
-        let line_length = line.len();
-        let line_end = min(line_length, right_visible);
-        let line = &line[leftcol..line_end];
-        print!("{:>3} {}", topline + i + 1, line);
-        // if filler != 0 || topline + i + 1 != end {
-        print!("\r\n");
-        // }
+) -> Result<(), std::io::Error> {
+    let nl = get_line_seperator(&CRLF);
+
+    let lfnl = get_line_seperator(&LF);
+
+    let mut lock = stdout().lock();
+    for i in topline..end {
+        let line = content.line(i);
+        let line_end = min(line.len_chars(), right_visible);
+        let mut line = line.slice(leftcol..line_end).to_string();
+        if line.ends_with(lfnl) {
+            line.pop();
+        }
+
+        let line_txt = format!("{:>3} {}{}", topline + i + 1, line, nl);
+        write!(lock, "{line_txt}")?;
     }
-    for i in 0..filler {
-        print!("~");
-        // if i != filler - 1 {
-        print!("\r\n");
-        // }
+
+    for _ in 0..filler {
+        write!(lock, "~{nl}")?;
     }
+
     let command_text = STORE.read().unwrap().command.clone();
     let message = match *mode.lock().unwrap() {
         Mode::Normal => String::new(),
         Mode::Insert => String::from("-- INSERT --"),
-        Mode::Command => format!(":{}", command_text),
+        Mode::Command => format!(":{command_text}"),
     };
-    print!("{}", message);
+
+    write!(lock, "{message}")?;
+    stdout().flush()
 }
 
 fn move_cursor(cursor: cursor::Cursor) -> Result<(), std::io::Error> {
@@ -95,7 +109,7 @@ fn redraw(
                 right_visible,
                 filler,
                 &mode,
-            );
+            )?;
             move_cursor(cursor)?;
         }
         show_cursor(&mut stdout)?;
@@ -111,27 +125,27 @@ fn redraw(
 fn main() -> Result<(), std::io::Error> {
     let redraw_needed = Arc::new((Mutex::new(false), Condvar::new()));
     let buffers: Vec<Arc<Mutex<Buffer>>> = vec![Mutex::new(Buffer::empty()).into()];
-    let buffer = Arc::clone(buffers.first().unwrap());
+    let buffer = buffers.first().unwrap().clone();
     let (width, height) = crossterm::terminal::size().unwrap();
     let window = Arc::new(Mutex::new(Window::new(
-        Arc::clone(&buffer),
-        max(width - 4, 0) as usize,
-        max(height - 1, 0) as usize,
+        buffer.clone(),
+        width.saturating_sub(4).into(),
+        height.saturating_sub(1).into(),
     )));
 
     let mode = Arc::new(Mutex::new(mode::Mode::Normal));
 
     terminal::enable_raw_mode()?;
 
-    let redraw_clone = Arc::clone(&redraw_needed);
-    let window_clone = Arc::clone(&window);
-    let mode_clone = Arc::clone(&mode);
+    let redraw_clone = redraw_needed.clone();
+    let window_clone = window.clone();
+    let mode_clone = mode.clone();
     let key_handler = std::thread::spawn(move || {
         loop {
             let res = handle_keys(&window_clone, &mode_clone);
             match res {
                 Err(e) => {
-                    println!("Error handling keys: {}", e);
+                    println!("Error handling keys: {e}");
                     let _ = graceful_exit(-1);
                 }
                 Ok(redraw) => {
@@ -148,7 +162,7 @@ fn main() -> Result<(), std::io::Error> {
 
     let stdout = stdout();
 
-    let redraw_clone = Arc::clone(&redraw_needed);
+    let redraw_clone = redraw_needed.clone();
     redraw(redraw_clone, window, stdout, mode)?;
 
     key_handler

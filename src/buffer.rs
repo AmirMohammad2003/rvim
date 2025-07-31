@@ -1,6 +1,8 @@
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::BufWriter;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use ropey::Rope;
 
 static ID_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
@@ -11,7 +13,7 @@ pub enum LineTermination {
     CR,
 }
 
-fn get_line_seperator(terminator: &LineTermination) -> &str {
+pub fn get_line_seperator(terminator: &LineTermination) -> &str {
     match terminator {
         LineTermination::CRLF => "\r\n",
         LineTermination::LF => "\n",
@@ -32,7 +34,7 @@ fn line_termination_from_str(s: &str) -> LineTermination {
 pub struct Buffer {
     pub id: usize,
     pub name: String,
-    pub content: Vec<String>,
+    pub content: Rope,
     pub edited: bool,
     pub lines: usize,
     pub line_termination: LineTermination,
@@ -41,12 +43,11 @@ pub struct Buffer {
 
 impl Buffer {
     fn new(name: &str, content: &str) -> Self {
-        let content: Vec<String> = content.lines().map(|line| line.to_string()).collect();
         let lines = content.len();
         Self {
             id: ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             name: name.to_string(),
-            content,
+            content: Rope::from_str(content),
             edited: false,
             lines,
             line_termination: LineTermination::LF,
@@ -58,7 +59,7 @@ impl Buffer {
         Self {
             id: ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             name: "[No Name]".to_string(),
-            content: vec!["".to_string()],
+            content: Rope::new(),
             edited: false,
             lines: 1,
             line_termination: LineTermination::LF,
@@ -75,14 +76,12 @@ impl Buffer {
     }
 
     pub fn save_to_file(&self, file_path: &str) -> std::io::Result<()> {
-        let content = self
-            .content
-            .join(get_line_seperator(&self.line_termination));
-        fs::write(file_path, content)
+        let writer = BufWriter::new(File::create_new(file_path).unwrap());
+        self.content.write_to(writer)
     }
 
     fn get_name_from_file_path(file_path: &str) -> &str {
-        file_path.split('/').last().unwrap_or(file_path)
+        file_path.split('/').next_back().unwrap_or(file_path)
     }
 
     pub fn set_file_path(&mut self, file_path: &str) {

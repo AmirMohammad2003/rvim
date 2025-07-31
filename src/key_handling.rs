@@ -1,8 +1,4 @@
-use std::io::Write;
-use std::{
-    fs::File,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crossterm::event::{self, Event, KeyCode};
 
@@ -13,6 +9,7 @@ use crate::{
     mode::{Mode, change_mode},
     window::Window,
 };
+
 pub fn handle_keys(
     window: &Arc<Mutex<Window>>,
     mode: &Arc<Mutex<Mode>>,
@@ -29,7 +26,6 @@ pub fn handle_keys(
             Mode::Command => {
                 return handle_command(key_event, window, &mut mode_guard);
             }
-            _ => {}
         }
     }
     Ok(false)
@@ -57,10 +53,13 @@ fn handle_command(
                 "w" => {
                     let buffer = window.lock().unwrap().buffer.clone();
                     let mut buffer_guard = buffer.lock().unwrap();
-                    if let Some(file_path) = buffer_guard.fule_path.clone() {
-                        buffer_guard.save()?;
-                    } else {
-                        eprintln!("No file path set for saving.");
+                    match buffer_guard.fule_path.clone() {
+                        Some(_) => {
+                            buffer_guard.save()?;
+                        }
+                        None => {
+                            eprintln!("No file path set for saving.");
+                        }
                     }
                 }
                 _ if command.starts_with("w ") => {
@@ -72,10 +71,6 @@ fn handle_command(
                 _ if command.starts_with("e ") => {
                     let file_path = command[2..].trim();
                     let buffer = Buffer::load_from_file(file_path)?;
-                    let mut file = File::create("pedram").unwrap();
-                    for line in buffer.content.iter() {
-                        file.write_all(line.as_bytes())?;
-                    }
                     window
                         .lock()
                         .unwrap()
@@ -83,7 +78,7 @@ fn handle_command(
                 }
                 "e" => {}
                 _ => {
-                    println!("Unknown command: {}", command);
+                    println!("Unknown command: {command}");
                 }
             }
             change_mode(mode, Mode::Normal);
